@@ -16,6 +16,13 @@ class Network(object):
         #a3
 
         #[2,3,1]
+
+        self.num_layers = len(sizes)
+        self.sizes = sizes
+        self.biases = [np.random.randn(y, 1) for y in sizes[1:]]
+        self.weights = [np.random.randn(y, x)
+                        for x, y in zip(sizes[:-1], sizes[1:])]
+
         for i, item in enumerate(self.layers):
             #a = np.zeros(self.layers[i])
             node_layer = []
@@ -37,6 +44,12 @@ class Network(object):
                     node_layer.append(Node.Node(self.layers[i - 1]))
                 j +=1
             self.node_network.append(node_layer)
+
+    def feedforward_new(self, a):
+        """ Return the output of the network if ``a`` is input."""
+        for b, w in zip(self.biases, self.weights):
+            a = sigmoid(np.dot(w, a) + b)
+        return a
 
     def feed_network(self, inputs = []):
         #[2, 3]
@@ -71,7 +84,23 @@ class Network(object):
         for mini_batch in mini_batches:
             # perform back_prop on each then average the -cost_gradient
             # ,then apply update.
-            self.update_mini_batch(mini_batch)
+            self.update_mini_batch_new(mini_batch)
+
+    def update_mini_batch_new(self, mini_batch, eta = 0.5):
+        """Update the network's weights and biases by applying
+        gradient descent using backpropagation to a single mini batch.
+        The ``mini_batch`` is a list of tuples ``(x, y)``, and ``eta``
+        is the learning rate."""
+        nabla_b = [np.zeros(b.shape) for b in self.biases]
+        nabla_w = [np.zeros(w.shape) for w in self.weights]
+        for x, y in mini_batch:
+            delta_nabla_b, delta_nabla_w = self.backprop_new(x, y)
+            nabla_b = [nb+dnb for nb, dnb in zip(nabla_b, delta_nabla_b)]
+            nabla_w = [nw+dnw for nw, dnw in zip(nabla_w, delta_nabla_w)]
+        self.weights = [w-(eta/len(mini_batch))*nw
+                        for w, nw in zip(self.weights, nabla_w)]
+        self.biases = [b-(eta/len(mini_batch))*nb
+                       for b, nb in zip(self.biases, nabla_b)]
 
     def update_mini_batch(self, mini_batch):
         # perform back_prop on each then average the -cost_gradient
@@ -93,10 +122,10 @@ class Network(object):
                 nodes_weights = []
                 for weight in node.weights:
                     print("weight before: ",weight)
-                    weight += gradient[gradient_index]
+                    weight -= gradient[gradient_index]
                     nodes_weights.append(weight)
                     gradient_index += 1
-                bias = node.bias + gradient[gradient_index]
+                bias = node.bias - gradient[gradient_index]
                 node.set_weights_and_bias(nodes_weights, bias)
                 gradient_index += 1
 
@@ -105,32 +134,115 @@ class Network(object):
                 for weight in node.weights:
                     print("weight after: ",weight)
 
+    def backprop_new(self, x, y):
+        """Return a tuple ``(nabla_b, nabla_w)`` representing the
+        gradient for the cost function C_x.  ``nabla_b`` and
+        ``nabla_w`` are layer-by-layer lists of numpy arrays, similar
+        to ``self.biases`` and ``self.weights``."""
+        nabla_b = [np.zeros(b.shape) for b in self.biases]
+        nabla_w = [np.zeros(w.shape) for w in self.weights]
+        # feedforward
+        activation = np.array(x).transpose()
+        activations = [np.array(x).transpose()] # list to store all the activations, layer by layer
+        zs = [] # list to store all the z vectors, layer by layer
+        i = 0
+        for b, w in zip(self.biases, self.weights):
+            print(i)
+            z = np.dot(w, activation)+b
+            zs.append(z)
+            activation = sigmoid(z)
+            activations.append(activation)
+        # backward passio
+
+        delta = self.cost_derivative(activations[-1], y) * sigmoid_prime(zs[-1])
+
+        nabla_b[-1] = delta
+        nabla_w[-1] = np.dot(delta, activations[-2].transpose())
+        # Note that the variable l in the loop below is used a little
+        # differently to the notation in Chapter 2 of the book.  Here,
+        # l = 1 means the last layer of neurons, l = 2 is the
+        # second-last layer, and so on.  It's a renumbering of the
+        # scheme in the book, used here to take advantage of the fact
+        # that Python can use negative indices in lists.
+        for l in range(2, self.num_layers):
+            z = zs[-l]
+            sp = sigmoid_prime(z)
+            delta = np.dot(self.weights[-l+1].transpose(), delta) * sp
+            nabla_b[-l] = delta
+            nabla_w[-l] = np.dot(delta, activations[-l-1].transpose())
+        return (nabla_b, nabla_w)
+
     #works for 1-dm netowrk
     def back_prop_dev(self, x, y):
         self.feed_network(x)
-        last_layer = self.node_network[::-1][0]
-        c_over_a = []
-        init_cost = self.cost_derivative(last_layer, y)
-        for input in last_layer[0].inputs:
-            c_over_a.append(init_cost)
         neg_gradient = []
-        for layer in (self.node_network[::-1])[0:(len(self.layers) - 1)]:
-            #input_count = layer[0].number_of_inputs
-            net_a_over_z = []
-            for index, input in enumerate(layer[0].inputs):
-                net_a_over_z.append(0)
-            for node_index, node in enumerate(layer):
-                a_over_z = self.sigmoid_prime(node.z_output)
-                for input_index, input in enumerate(node.inputs):
-                    z_over_w = input
-                    neg_gradient.append(c_over_a[node_index]*a_over_z*z_over_w)
-                    z_over_a = node.weights[input_index]
-                    net_a_over_z[input_index] += c_over_a[node_index]*a_over_z * z_over_a
-                neg_gradient.append(c_over_a[node_index] * a_over_z * 1)
-            c_over_a = []
-            for index, layer_ins in enumerate(net_a_over_z):
-                c_over_a.append(layer_ins)
+        #last_layer = self.node_network[::-1][0]
+        last_layer = self.node_network[::-1][0]
+
+        for index in range(0,53):
+            neg_gradient.append(0)
+
+        for index, nodes in enumerate(last_layer):
+            gradient_index = 0
+            init_cost = self.cost_derivative(nodes.output, y[index])
+            c_over_a = init_cost
+            #init_cost = self.cost_derivative(last_layer, y)
+            for layer in (self.node_network[::-1])[0:(len(self.layers) - 1)]:
+                #input_count = layer[0].number_of_inputs
+                net_a_over_z = []
+                for index, input in enumerate(layer[0].inputs):
+                    net_a_over_z.append(0)
+                for node_index, node in enumerate(layer):
+                    a_over_z = self.sigmoid_prime(node.z_output)
+                    for input_index, input in enumerate(node.inputs):
+                        z_over_w = input
+                        #neg_gradient.append(c_over_a[node_index]*a_over_z*z_over_w)
+                        neg_gradient[gradient_index] += (c_over_a * a_over_z * z_over_w)
+                        gradient_index += 1
+                        z_over_a = node.weights[input_index]
+                        net_a_over_z[input_index] += c_over_a*a_over_z * z_over_a
+                    neg_gradient.append(c_over_a[node_index] * a_over_z * 1)
+                c_over_a = []
+                for index, layer_ins in enumerate(net_a_over_z):
+                    c_over_a.append(layer_ins)
         return neg_gradient
+
+        # works for 1-dm netowrk
+        def back_prop_dev_2(self, x, y):
+            self.feed_network(x)
+            neg_gradient = []
+            # last_layer = self.node_network[::-1][0]
+            last_layer = self.node_network[::-1][0]
+
+            for index in range(0, 53):
+                neg_gradient.append(0)
+
+            for index, nodes in enumerate(last_layer):
+                gradient_index = 0
+                init_cost = self.cost_derivative(nodes.output, y[index])
+                c_over_a = []
+                # init_cost = self.cost_derivative(last_layer, y)
+                for input in last_layer[0].inputs:
+                    c_over_a.append(init_cost)
+                for layer in (self.node_network[::-1])[0:(len(self.layers) - 1)]:
+                    # input_count = layer[0].number_of_inputs
+                    net_a_over_z = []
+                    for index, input in enumerate(layer[0].inputs):
+                        net_a_over_z.append(0)
+                    for node_index, node in enumerate(layer):
+                        a_over_z = self.sigmoid_prime(node.z_output)
+                        for input_index, input in enumerate(node.inputs):
+                            z_over_w = input
+                            # neg_gradient.append(c_over_a[node_index]*a_over_z*z_over_w)
+                            neg_gradient[gradient_index] += (c_over_a[node_index] * a_over_z * z_over_w)
+                            gradient_index += 1
+                            z_over_a = node.weights[input_index]
+                            net_a_over_z[input_index] += c_over_a[node_index] * a_over_z * z_over_a
+                        neg_gradient.append(c_over_a[node_index] * a_over_z * 1)
+                    c_over_a = []
+                    for index, layer_ins in enumerate(net_a_over_z):
+                        c_over_a.append(layer_ins)
+            return neg_gradient
 
     def back_prop(self, x, y):
         #the order of the gradient is now 1 for every input to a node then its bias
@@ -157,13 +269,28 @@ class Network(object):
         return neg_gradient
 
 
-    def cost_derivative(self, output_layer, y):
+    def cost_derivative_new(self, output_layer, y):
         #oC/oA
         #sum the squares of the difference between the output and actual
         cost =0
-        for index, node in enumerate(output_layer):
-            cost += 2*(node.output-y[index])
+        cost = (output_layer - y)
+        #for index, node in enumerate(output_layer):
+        #    cost = 2*(node.output-y[index])
         return cost#/len(output_layer)
+
+    def evaluate(self, test_data):
+        """Return the number of test inputs for which the neural
+        network outputs the correct result. Note that the neural
+        network's output is assumed to be the index of whichever
+        neuron in the final layer has the highest activation."""
+        test_results = [(np.argmax(self.feedforward(x)), y)
+                        for (x, y) in test_data]
+        return sum(int(x == y) for (x, y) in test_results)
+
+    def cost_derivative(self, output_activations, y):
+        """Return the vector of partial derivatives \partial C_x /
+        \partial a for the output activations."""
+        return (output_activations-y)
 
     #### Miscellaneous functions
     def sigmoid(self, z):
@@ -179,3 +306,11 @@ class Network(object):
             for index, node in enumerate(layer):
                 cost=(node.output - labels[index])**2
 """
+	#### Miscellaneous functions
+def sigmoid(z):
+	""""The sigmoid function."""
+	return (1.0/(1.0+np.exp(-z)))
+
+def sigmoid_prime(z):
+	"""Derivative of the sigmoid function"""
+	return(sigmoid(z)*(1-sigmoid(z)))
